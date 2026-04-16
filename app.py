@@ -1,182 +1,260 @@
+# app.py
+# Streamlit version of your working notebook logic
+# Upload CSV -> remove IDs -> FAMD(8) -> KMeans(4) -> reattach IDs -> profiles + visuals
+
 import streamlit as st
 import pandas as pd
-import prince
-import joblib
-from sklearn.cluster import KMeans
-from sklearn.metrics import silhouette_score
 import matplotlib.pyplot as plt
+import prince
 
-st.set_page_config(layout="wide")
-st.title("Survey Clustering Studio")
+from sklearn.cluster import KMeans
 
-# -------------------
-# Helpers
-# -------------------
+# =====================================================
+# PAGE CONFIG
+# =====================================================
+st.set_page_config(
+    page_title="SME Clustering App",
+    layout="wide"
+)
 
-def clean_columns(df):
-    df.columns = (
-        df.columns.astype(str)
-        .str.strip()
-        .str.replace(r"\s+", " ", regex=True)
-        .str.replace("’", "'")
-    )
-    return df
+st.title("SME Clustering App")
+st.caption(
+    "Upload a CSV file to cluster SMEs using FAMD + KMeans."
+)
 
-def preprocess(df):
-    df = clean_columns(df).copy()
+# =====================================================
+# FIXED SETTINGS
+# =====================================================
+N_COMPONENTS = 8
+N_CLUSTERS = 4
 
-    # object cleanup
-    for col in df.select_dtypes(include="object").columns:
-        df[col] = (
-            df[col]
-            .astype(str)
-            .str.strip()
-            .replace({"nan": "Missing", "": "Missing"})
-        )
+id_cols = [
+    "Company name",
+    "Company Email",
+    "Company number",
+    "City"
+]
 
-    return df
+# =====================================================
+# FILE UPLOAD
+# =====================================================
+uploaded_file = st.file_uploader(
+    "Upload CSV File",
+    type=["csv"]
+)
 
-def auto_k(X, k_min=2, k_max=8):
-    best_k = 2
-    best_score = -1
+# =====================================================
+# MAIN APP
+# =====================================================
+if uploaded_file is not None:
 
-    for k in range(k_min, k_max + 1):
-        km = KMeans(n_clusters=k, random_state=42, n_init=10)
-        labels = km.fit_predict(X)
+    try:
+        # ---------------------------------------------
+        # LOAD DATA
+        # ---------------------------------------------
+        df = pd.read_csv(uploaded_file)
 
-        score = silhouette_score(X, labels)
+        st.subheader("Dataset Preview")
+        st.dataframe(df.head())
 
-        if score > best_score:
-            best_score = score
-            best_k = k
+        st.write(f"Rows: {df.shape[0]} | Columns: {df.shape[1]}")
 
-    return best_k, best_score
+        # ---------------------------------------------
+        # IDENTIFY ID COLUMNS PRESENT
+        # ---------------------------------------------
+        existing_ids = [col for col in id_cols if col in df.columns]
 
-def cluster_summary(df, labels):
-    temp = df.copy()
-    temp["cluster"] = labels
+        ids = df[existing_ids].copy()
 
-    rows = []
+        # ---------------------------------------------
+        # REMOVE IDS
+        # ---------------------------------------------
+        X = df.drop(columns=existing_ids, errors="ignore").copy()
 
-    for c in sorted(temp["cluster"].unique()):
-        sub = temp[temp["cluster"] == c]
+        # ---------------------------------------------
+        # RUN MODEL
+        # ---------------------------------------------
+        if st.button("Run Analysis"):
 
-        rows.append({
-            "cluster": c,
-            "rows": len(sub),
-            "pct": round(len(sub) / len(temp) * 100, 1)
-        })
+            with st.spinner("Running clustering model..."):
 
-    return pd.DataFrame(rows)
+                # FAMD
+                famd = prince.FAMD(
+                    n_components=N_COMPONENTS,
+                    random_state=42
+                )
 
-# -------------------
-# UI
-# -------------------
+                X_famd = famd.fit_transform(X)
 
-uploaded = st.file_uploader("Upload CSV", type=["csv"])
+                # KMeans
+                kmeans = KMeans(
+                    n_clusters=N_CLUSTERS,
+                    random_state=42,
+                    n_init=10
+                )
 
-if uploaded:
+                clusters = kmeans.fit_predict(X_famd)
 
-    df = pd.read_csv(uploaded)
-    df = preprocess(df)
+            # -----------------------------------------
+            # FAMD COORDINATES
+            # -----------------------------------------
+            X_famd_df = X_famd.copy()
+            X_famd_df.columns = [
+                f"dim_{i}" for i in range(X_famd_df.shape[1])
+            ]
 
-    st.subheader("Preview")
-    st.dataframe(df.head())
-
-    id_cols = st.multiselect(
-        "Select ID columns (optional)",
-        options=df.columns.tolist()
-    )
-
-    X = df.drop(columns=id_cols, errors="ignore")
-
-    famd_components = st.slider(
-        "FAMD Components",
-        min_value=2,
-        max_value=15,
-        value=8
-    )
-
-    cluster_mode = st.radio(
-        "Cluster Selection",
-        ["Auto-select", "Manual"]
-    )
-
-    if cluster_mode == "Manual":
-        k = st.slider("Choose number of clusters", 2, 10, 4)
-    else:
-        k = None
-
-    save_model = st.checkbox("Save trained model")
-
-    if st.button("Run Clustering"):
-
-        with st.spinner("Training FAMD..."):
-
-            famd = prince.FAMD(
-                n_components=famd_components,
-                random_state=42
+            # -----------------------------------------
+            # CLUSTER LABELS
+            # -----------------------------------------
+            clusters_df = pd.DataFrame(
+                {"cluster": clusters},
+                index=X.index
             )
 
-            X_famd = famd.fit_transform(X)
-
-        if cluster_mode == "Auto-select":
-            k, score = auto_k(X_famd)
-            st.success(f"Auto-selected k={k} | silhouette={score:.3f}")
-
-        km = KMeans(
-            n_clusters=k,
-            random_state=42,
-            n_init=10
-        )
-
-        labels = km.fit_predict(X_famd)
-
-        # results
-        result = df.copy()
-        result["cluster"] = labels
-
-        st.subheader("Cluster Summary")
-        st.dataframe(cluster_summary(df, labels))
-
-        st.subheader("Cluster Counts")
-        st.bar_chart(result["cluster"].value_counts().sort_index())
-
-        # scatter
-        fig, ax = plt.subplots(figsize=(8,5))
-        ax.scatter(X_famd.iloc[:,0], X_famd.iloc[:,1], c=labels)
-        ax.set_xlabel("Dim 1")
-        ax.set_ylabel("Dim 2")
-        ax.set_title("FAMD Cluster Map")
-        st.pyplot(fig)
-
-        # top categories by chosen field
-        cat_cols = X.select_dtypes(include="object").columns.tolist()
-
-        if cat_cols:
-            field = st.selectbox("Compare clusters by field", cat_cols)
-
-            cross = pd.crosstab(
-                result["cluster"],
-                result[field],
-                normalize="index"
+            # -----------------------------------------
+            # REATTACH IDS
+            # -----------------------------------------
+            result_df = pd.concat(
+                [
+                    ids.reset_index(drop=True),
+                    X_famd_df.reset_index(drop=True),
+                    clusters_df.reset_index(drop=True)
+                ],
+                axis=1
             )
 
-            st.subheader(f"Cluster vs {field}")
-            st.dataframe(cross)
+            # -----------------------------------------
+            # SHOW RESULTS
+            # -----------------------------------------
+            st.subheader("Clustered Results")
+            st.dataframe(result_df)
 
-        # download
-        csv = result.to_csv(index=False).encode("utf-8")
+            # -----------------------------------------
+            # NUMERIC PROFILE
+            # -----------------------------------------
+            numerical_cols = X.select_dtypes(
+                include=["number"]
+            ).columns
 
-        st.download_button(
-            "Download Results CSV",
-            csv,
-            "clustered_results.csv",
-            "text/csv"
-        )
+            if len(numerical_cols) > 0:
 
-        # optional save
-        if save_model:
-            joblib.dump(famd, "famd.joblib")
-            joblib.dump(km, "kmeans.joblib")
-            st.success("Models saved locally.")
+                cluster_profile_num = X.groupby(
+                    clusters
+                )[numerical_cols].mean()
+
+                st.subheader("Numeric Cluster Profile")
+                st.dataframe(cluster_profile_num)
+
+            # -----------------------------------------
+            # CATEGORICAL PROFILE
+            # -----------------------------------------
+            categorical_cols = X.select_dtypes(
+                include=["object", "category"]
+            ).columns.tolist()
+
+            if len(categorical_cols) > 0:
+
+                st.subheader("Categorical Visualisation")
+
+                selected_col = st.selectbox(
+                    "Choose categorical feature",
+                    categorical_cols
+                )
+
+                cross = pd.crosstab(
+                    clusters,
+                    X[selected_col],
+                    normalize="index"
+                )
+
+                st.dataframe(cross)
+
+                fig, ax = plt.subplots(
+                    figsize=(12, 6)
+                )
+
+                cross.plot(
+                    kind="bar",
+                    stacked=True,
+                    ax=ax
+                )
+
+                ax.set_title(
+                    f"{selected_col} by Cluster"
+                )
+
+                ax.set_xlabel("Cluster")
+                ax.set_ylabel("Proportion")
+
+                plt.xticks(rotation=0)
+                plt.tight_layout()
+
+                st.pyplot(fig)
+
+            # -----------------------------------------
+            # CLUSTER COUNTS
+            # -----------------------------------------
+            st.subheader("Cluster Counts")
+
+            counts = result_df["cluster"] \
+                .value_counts() \
+                .sort_index()
+
+            st.bar_chart(counts)
+
+            # -----------------------------------------
+            # FAMD SCATTER
+            # -----------------------------------------
+            st.subheader("Cluster Map")
+
+            fig2, ax2 = plt.subplots(
+                figsize=(8, 5)
+            )
+
+            ax2.scatter(
+                X_famd_df["dim_0"],
+                X_famd_df["dim_1"],
+                c=clusters
+            )
+
+            ax2.set_xlabel("Dimension 1")
+            ax2.set_ylabel("Dimension 2")
+            ax2.set_title("FAMD Cluster Projection")
+
+            st.pyplot(fig2)
+
+            # -----------------------------------------
+            # VIEW CLUSTER MEMBERS
+            # -----------------------------------------
+            st.subheader("View SMEs by Cluster")
+
+            selected_cluster = st.selectbox(
+                "Choose cluster",
+                sorted(result_df["cluster"].unique())
+            )
+
+            st.dataframe(
+                result_df[
+                    result_df["cluster"] == selected_cluster
+                ]
+            )
+
+            # -----------------------------------------
+            # DOWNLOAD
+            # -----------------------------------------
+            csv = result_df.to_csv(
+                index=False
+            ).encode("utf-8")
+
+            st.download_button(
+                label="Download Results CSV",
+                data=csv,
+                file_name="cluster_results.csv",
+                mime="text/csv"
+            )
+
+    except Exception as e:
+        st.error(str(e))
+
+else:
+    st.info("Upload a CSV file to begin.")
