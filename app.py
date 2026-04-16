@@ -3,7 +3,7 @@
 # Shows exactly where startup/runtime breaks
 
 import streamlit as st
-
+@st.cache_resource
 # -------------------------------------------------
 # EARLY PAGE LOAD
 # -------------------------------------------------
@@ -28,7 +28,7 @@ try:
 except Exception as e:
     st.error(f"❌ matplotlib import failed: {e}")
     st.stop()
-@st.cache_resource
+
 try:
     import prince
     st.write("✅ prince imported")
