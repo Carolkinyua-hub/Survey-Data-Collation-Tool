@@ -1,9 +1,10 @@
 # app.py
-# Lightweight SME Clustering App (1GB friendly)
-# Includes cluster cross-tabs + requested visualisations
+# Lightweight SME Clustering App
+# Main features by cluster weighting + requested visualisations
 
 import streamlit as st
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import prince
 from sklearn.cluster import KMeans
@@ -18,13 +19,13 @@ st.set_page_config(
 
 st.title("SME Clustering App")
 st.caption(
-    "Low-memory clustering app with cluster visuals and cross-tabs."
+    "Cluster SMEs and identify the main weighted features driving each cluster."
 )
 
 # =====================================================
 # SETTINGS
 # =====================================================
-N_COMPONENTS = 2
+N_COMPONENTS = 8
 N_CLUSTERS = 4
 MAX_ROWS = 500
 
@@ -36,12 +37,12 @@ id_cols = [
 ]
 
 # =====================================================
-# MODEL FUNCTION (CACHED)
+# MODEL FUNCTION
 # =====================================================
 @st.cache_data(show_spinner=False)
 def run_model(df):
 
-    # Row cap
+    # Row cap for low memory hosting
     if len(df) > MAX_ROWS:
         df = df.head(MAX_ROWS).copy()
 
@@ -61,7 +62,7 @@ def run_model(df):
         random_state=42
     )
 
-    X_famd = famd.fit_transform(X)
+    coords = famd.fit_transform(X)
 
     # KMeans
     kmeans = KMeans(
@@ -70,13 +71,9 @@ def run_model(df):
         n_init=10
     )
 
-    labels = kmeans.fit_predict(X_famd)
+    labels = kmeans.fit_predict(coords)
 
-    # Coordinates
-    coords = X_famd.copy()
-    coords.columns = ["dim_0", "dim_1"]
-
-    # Results
+    # Final results
     result = pd.concat(
         [
             ids.reset_index(drop=True),
@@ -87,6 +84,69 @@ def run_model(df):
     )
 
     return result, coords, labels, X
+
+
+# =====================================================
+# FEATURE IMPORTANCE / WEIGHTING
+# =====================================================
+def get_cluster_features(result, X):
+
+    temp = X.copy()
+    temp["cluster"] = result["cluster"].values
+
+    rows = []
+
+    for cluster_id in sorted(temp["cluster"].unique()):
+
+        cluster_df = temp[temp["cluster"] == cluster_id]
+        other_df = temp[temp["cluster"] != cluster_id]
+
+        for col in X.columns:
+
+            # Numeric columns
+            if pd.api.types.is_numeric_dtype(X[col]):
+
+                cluster_mean = cluster_df[col].mean()
+                overall_mean = other_df[col].mean()
+
+                score = abs(cluster_mean - overall_mean)
+
+                rows.append({
+                    "cluster": cluster_id,
+                    "feature": col,
+                    "score": round(score, 4),
+                    "type": "numeric"
+                })
+
+            # Categorical columns
+            else:
+
+                top_cluster = (
+                    cluster_df[col]
+                    .astype(str)
+                    .value_counts(normalize=True)
+                    .head(1)
+                )
+
+                if len(top_cluster) > 0:
+                    val = top_cluster.index[0]
+                    pct = top_cluster.values[0]
+
+                    rows.append({
+                        "cluster": cluster_id,
+                        "feature": f"{col} = {val}",
+                        "score": round(pct, 4),
+                        "type": "categorical"
+                    })
+
+    feature_df = pd.DataFrame(rows)
+
+    feature_df = feature_df.sort_values(
+        ["cluster", "score"],
+        ascending=[True, False]
+    )
+
+    return feature_df
 
 
 # =====================================================
@@ -113,7 +173,7 @@ if uploaded_file is not None:
 
         if len(df) > MAX_ROWS:
             st.warning(
-                f"Using first {MAX_ROWS} rows to stay within memory limits."
+                f"Using first {MAX_ROWS} rows for memory efficiency."
             )
 
         if st.button("Run Analysis"):
@@ -123,13 +183,32 @@ if uploaded_file is not None:
                 result, coords, labels, X = run_model(df)
 
             # =================================================
-            # RESULTS
+            # MAIN FEATURE WEIGHTING
             # =================================================
-            st.subheader("Cluster Results")
-            st.dataframe(result)
+            st.subheader("Main Features Driving Each Cluster")
+
+            feature_df = get_cluster_features(result, X)
+
+            top_n = st.slider(
+                "Top Features Per Cluster",
+                3, 10, 5
+            )
+
+            display_rows = []
+
+            for c in sorted(feature_df["cluster"].unique()):
+                top_features = feature_df[
+                    feature_df["cluster"] == c
+                ].head(top_n)
+
+                display_rows.append(top_features)
+
+            display_df = pd.concat(display_rows)
+
+            st.dataframe(display_df)
 
             # =================================================
-            # VISUAL MENU
+            # VISUALISATIONS
             # =================================================
             st.subheader("Visualisations")
 
@@ -139,13 +218,12 @@ if uploaded_file is not None:
                     "Cluster Counts",
                     "Cluster Map",
                     "City by Cluster",
-                    "Cluster Members",
-                    "Cross-tab by Variable"
+                    "Cluster Members"
                 ]
             )
 
             # ---------------------------------------------
-            # 1. CLUSTER COUNTS
+            # CLUSTER COUNTS
             # ---------------------------------------------
             if viz == "Cluster Counts":
 
@@ -158,26 +236,26 @@ if uploaded_file is not None:
                 st.bar_chart(counts)
 
             # ---------------------------------------------
-            # 2. CLUSTER MAP
+            # CLUSTER MAP
             # ---------------------------------------------
             elif viz == "Cluster Map":
 
                 fig, ax = plt.subplots(figsize=(8, 5))
 
                 ax.scatter(
-                    coords["dim_0"],
-                    coords["dim_1"],
+                    coords.iloc[:, 0],
+                    coords.iloc[:, 1],
                     c=labels
                 )
 
                 ax.set_xlabel("Dimension 1")
                 ax.set_ylabel("Dimension 2")
-                ax.set_title("FAMD Projection")
+                ax.set_title("Cluster Projection")
 
                 st.pyplot(fig)
 
             # ---------------------------------------------
-            # 3. CITY BY CLUSTER
+            # CITY BY CLUSTER
             # ---------------------------------------------
             elif viz == "City by Cluster":
 
@@ -195,7 +273,7 @@ if uploaded_file is not None:
                     st.warning("City column not found.")
 
             # ---------------------------------------------
-            # 4. CLUSTER MEMBERS
+            # CLUSTER MEMBERS
             # ---------------------------------------------
             elif viz == "Cluster Members":
 
@@ -204,62 +282,11 @@ if uploaded_file is not None:
                     sorted(result["cluster"].unique())
                 )
 
-                filtered = result[
-                    result["cluster"] == selected_cluster
-                ]
-
-                st.dataframe(filtered)
-
-            # ---------------------------------------------
-            # 5. VARIABLE CROSS-TAB
-            # ---------------------------------------------
-            elif viz == "Cross-tab by Variable":
-
-                cat_cols = X.select_dtypes(
-                    include=["object", "category"]
-                ).columns.tolist()
-
-                if len(cat_cols) > 0:
-
-                    chosen = st.selectbox(
-                        "Choose variable",
-                        cat_cols
-                    )
-
-                    xtab = pd.crosstab(
-                        result["cluster"],
-                        result[chosen],
-                        normalize="index"
-                    )
-
-                    st.dataframe(xtab)
-
-                    fig2, ax2 = plt.subplots(
-                        figsize=(12, 6)
-                    )
-
-                    xtab.plot(
-                        kind="bar",
-                        stacked=True,
-                        ax=ax2
-                    )
-
-                    ax2.set_title(
-                        f"{chosen} by Cluster"
-                    )
-
-                    ax2.set_xlabel("Cluster")
-                    ax2.set_ylabel("Proportion")
-
-                    plt.xticks(rotation=0)
-                    plt.tight_layout()
-
-                    st.pyplot(fig2)
-
-                else:
-                    st.warning(
-                        "No categorical columns available."
-                    )
+                st.dataframe(
+                    result[
+                        result["cluster"] == selected_cluster
+                    ]
+                )
 
             # =================================================
             # DOWNLOAD
