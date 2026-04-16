@@ -1,30 +1,51 @@
 # app.py
-# Streamlit version of your working notebook logic
-# Upload CSV -> remove IDs -> FAMD(8) -> KMeans(4) -> reattach IDs -> profiles + visuals
+# DEBUG VERSION
+# Shows exactly where startup/runtime breaks
 
 import streamlit as st
-import pandas as pd
-import matplotlib.pyplot as plt
-import prince
 
-from sklearn.cluster import KMeans
+# -------------------------------------------------
+# EARLY PAGE LOAD
+# -------------------------------------------------
+st.set_page_config(page_title="SME Clustering App", layout="wide")
+st.title("SME Clustering App - Debug Mode")
 
-# =====================================================
-# PAGE CONFIG
-# =====================================================
-st.set_page_config(
-    page_title="SME Clustering App",
-    layout="wide"
-)
+st.write("✅ App file started successfully")
 
-st.title("SME Clustering App")
-st.caption(
-    "Upload a CSV file to cluster SMEs using FAMD + KMeans."
-)
+# -------------------------------------------------
+# DEBUG IMPORTS
+# -------------------------------------------------
+try:
+    import pandas as pd
+    st.write("✅ pandas imported")
+except Exception as e:
+    st.error(f"❌ pandas import failed: {e}")
+    st.stop()
 
-# =====================================================
-# FIXED SETTINGS
-# =====================================================
+try:
+    import matplotlib.pyplot as plt
+    st.write("✅ matplotlib imported")
+except Exception as e:
+    st.error(f"❌ matplotlib import failed: {e}")
+    st.stop()
+
+try:
+    import prince
+    st.write("✅ prince imported")
+except Exception as e:
+    st.error(f"❌ prince import failed: {e}")
+    st.stop()
+
+try:
+    from sklearn.cluster import KMeans
+    st.write("✅ sklearn imported")
+except Exception as e:
+    st.error(f"❌ sklearn import failed: {e}")
+    st.stop()
+
+# -------------------------------------------------
+# SETTINGS
+# -------------------------------------------------
 N_COMPONENTS = 8
 N_CLUSTERS = 4
 
@@ -35,226 +56,126 @@ id_cols = [
     "City"
 ]
 
-# =====================================================
-# FILE UPLOAD
-# =====================================================
-uploaded_file = st.file_uploader(
-    "Upload CSV File",
-    type=["csv"]
-)
+st.write("✅ Settings loaded")
 
-# =====================================================
-# MAIN APP
-# =====================================================
+# -------------------------------------------------
+# FILE UPLOAD
+# -------------------------------------------------
+uploaded_file = st.file_uploader("Upload CSV File", type=["csv"])
+
 if uploaded_file is not None:
 
     try:
-        # ---------------------------------------------
-        # LOAD DATA
-        # ---------------------------------------------
-        df = pd.read_csv(uploaded_file)
+        st.write("✅ File uploaded")
 
-        st.subheader("Dataset Preview")
+        # -----------------------------------------
+        # READ CSV
+        # -----------------------------------------
+        df = pd.read_csv(uploaded_file)
+        st.write("✅ CSV read successfully")
+
+        st.write("Rows:", df.shape[0])
+        st.write("Columns:", df.shape[1])
+
         st.dataframe(df.head())
 
-        st.write(f"Rows: {df.shape[0]} | Columns: {df.shape[1]}")
-
-        # ---------------------------------------------
-        # IDENTIFY ID COLUMNS PRESENT
-        # ---------------------------------------------
-        existing_ids = [col for col in id_cols if col in df.columns]
+        # -----------------------------------------
+        # IDS
+        # -----------------------------------------
+        existing_ids = [c for c in id_cols if c in df.columns]
+        st.write("✅ Existing ID columns:", existing_ids)
 
         ids = df[existing_ids].copy()
 
-        # ---------------------------------------------
+        # -----------------------------------------
         # REMOVE IDS
-        # ---------------------------------------------
+        # -----------------------------------------
         X = df.drop(columns=existing_ids, errors="ignore").copy()
 
-        # ---------------------------------------------
-        # RUN MODEL
-        # ---------------------------------------------
+        st.write("✅ Modeling dataset created")
+        st.write("Shape:", X.shape)
+
+        # -----------------------------------------
+        # RUN BUTTON
+        # -----------------------------------------
         if st.button("Run Analysis"):
 
-            with st.spinner("Running clustering model..."):
+            st.write("▶️ Starting model run")
 
-                # FAMD
+            # -------------------------------------
+            # FAMD INIT
+            # -------------------------------------
+            try:
                 famd = prince.FAMD(
                     n_components=N_COMPONENTS,
                     random_state=42
                 )
+                st.write("✅ FAMD initialized")
+            except Exception as e:
+                st.error(f"❌ FAMD init failed: {e}")
+                st.stop()
 
+            # -------------------------------------
+            # FAMD FIT
+            # -------------------------------------
+            try:
                 X_famd = famd.fit_transform(X)
+                st.write("✅ FAMD fit_transform complete")
+            except Exception as e:
+                st.error(f"❌ FAMD fit_transform failed: {e}")
+                st.stop()
 
-                # KMeans
+            # -------------------------------------
+            # KMEANS INIT
+            # -------------------------------------
+            try:
                 kmeans = KMeans(
                     n_clusters=N_CLUSTERS,
                     random_state=42,
                     n_init=10
                 )
+                st.write("✅ KMeans initialized")
+            except Exception as e:
+                st.error(f"❌ KMeans init failed: {e}")
+                st.stop()
 
+            # -------------------------------------
+            # KMEANS FIT
+            # -------------------------------------
+            try:
                 clusters = kmeans.fit_predict(X_famd)
+                st.write("✅ KMeans clustering complete")
+            except Exception as e:
+                st.error(f"❌ KMeans fit failed: {e}")
+                st.stop()
 
-            # -----------------------------------------
-            # FAMD COORDINATES
-            # -----------------------------------------
-            X_famd_df = X_famd.copy()
-            X_famd_df.columns = [
-                f"dim_{i}" for i in range(X_famd_df.shape[1])
-            ]
-
-            # -----------------------------------------
-            # CLUSTER LABELS
-            # -----------------------------------------
-            clusters_df = pd.DataFrame(
-                {"cluster": clusters},
-                index=X.index
-            )
-
-            # -----------------------------------------
-            # REATTACH IDS
-            # -----------------------------------------
-            result_df = pd.concat(
-                [
-                    ids.reset_index(drop=True),
-                    X_famd_df.reset_index(drop=True),
-                    clusters_df.reset_index(drop=True)
-                ],
-                axis=1
-            )
-
-            # -----------------------------------------
-            # SHOW RESULTS
-            # -----------------------------------------
-            st.subheader("Clustered Results")
-            st.dataframe(result_df)
-
-            # -----------------------------------------
-            # NUMERIC PROFILE
-            # -----------------------------------------
-            numerical_cols = X.select_dtypes(
-                include=["number"]
-            ).columns
-
-            if len(numerical_cols) > 0:
-
-                cluster_profile_num = X.groupby(
-                    clusters
-                )[numerical_cols].mean()
-
-                st.subheader("Numeric Cluster Profile")
-                st.dataframe(cluster_profile_num)
-
-            # -----------------------------------------
-            # CATEGORICAL PROFILE
-            # -----------------------------------------
-            categorical_cols = X.select_dtypes(
-                include=["object", "category"]
-            ).columns.tolist()
-
-            if len(categorical_cols) > 0:
-
-                st.subheader("Categorical Visualisation")
-
-                selected_col = st.selectbox(
-                    "Choose categorical feature",
-                    categorical_cols
-                )
-
-                cross = pd.crosstab(
-                    clusters,
-                    X[selected_col],
-                    normalize="index"
-                )
-
-                st.dataframe(cross)
-
-                fig, ax = plt.subplots(
-                    figsize=(12, 6)
-                )
-
-                cross.plot(
-                    kind="bar",
-                    stacked=True,
-                    ax=ax
-                )
-
-                ax.set_title(
-                    f"{selected_col} by Cluster"
-                )
-
-                ax.set_xlabel("Cluster")
-                ax.set_ylabel("Proportion")
-
-                plt.xticks(rotation=0)
-                plt.tight_layout()
-
-                st.pyplot(fig)
-
-            # -----------------------------------------
-            # CLUSTER COUNTS
-            # -----------------------------------------
-            st.subheader("Cluster Counts")
-
-            counts = result_df["cluster"] \
-                .value_counts() \
-                .sort_index()
-
-            st.bar_chart(counts)
-
-            # -----------------------------------------
-            # FAMD SCATTER
-            # -----------------------------------------
-            st.subheader("Cluster Map")
-
-            fig2, ax2 = plt.subplots(
-                figsize=(8, 5)
-            )
-
-            ax2.scatter(
-                X_famd_df["dim_0"],
-                X_famd_df["dim_1"],
-                c=clusters
-            )
-
-            ax2.set_xlabel("Dimension 1")
-            ax2.set_ylabel("Dimension 2")
-            ax2.set_title("FAMD Cluster Projection")
-
-            st.pyplot(fig2)
-
-            # -----------------------------------------
-            # VIEW CLUSTER MEMBERS
-            # -----------------------------------------
-            st.subheader("View SMEs by Cluster")
-
-            selected_cluster = st.selectbox(
-                "Choose cluster",
-                sorted(result_df["cluster"].unique())
-            )
-
-            st.dataframe(
-                result_df[
-                    result_df["cluster"] == selected_cluster
+            # -------------------------------------
+            # RESULTS
+            # -------------------------------------
+            try:
+                X_famd_df = X_famd.copy()
+                X_famd_df.columns = [
+                    f"dim_{i}" for i in range(X_famd_df.shape[1])
                 ]
-            )
 
-            # -----------------------------------------
-            # DOWNLOAD
-            # -----------------------------------------
-            csv = result_df.to_csv(
-                index=False
-            ).encode("utf-8")
+                result_df = pd.concat(
+                    [
+                        ids.reset_index(drop=True),
+                        X_famd_df.reset_index(drop=True),
+                        pd.Series(clusters, name="cluster")
+                    ],
+                    axis=1
+                )
 
-            st.download_button(
-                label="Download Results CSV",
-                data=csv,
-                file_name="cluster_results.csv",
-                mime="text/csv"
-            )
+                st.write("✅ Results table created")
+                st.dataframe(result_df.head())
+
+            except Exception as e:
+                st.error(f"❌ Result creation failed: {e}")
+                st.stop()
 
     except Exception as e:
-        st.error(str(e))
+        st.error(f"❌ CSV processing failed: {e}")
 
 else:
     st.info("Upload a CSV file to begin.")
