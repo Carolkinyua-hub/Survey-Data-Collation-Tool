@@ -32,18 +32,6 @@ st.caption(
     "and returned in final results."
 )
 
-# =====================================
-# HELPERS
-# =====================================
-def clean_columns(df):
-    df = df.copy()
-    df.columns = (
-        df.columns.astype(str)
-        .str.strip()
-        .str.replace(r"\s+", " ", regex=True)
-        .str.replace("’", "'")
-    )
-    return df
 
 # =====================================
 # FILE UPLOAD
