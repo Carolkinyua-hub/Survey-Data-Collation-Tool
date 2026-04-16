@@ -26,7 +26,7 @@ st.caption(
 # SETTINGS
 # =====================================================
 N_COMPONENTS = 2
-N_CLUSTERS = 4
+N_CLUSTERS = 3
 MAX_ROWS = 500
 
 id_cols = [
