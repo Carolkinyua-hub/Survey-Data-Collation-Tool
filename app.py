@@ -28,7 +28,7 @@ try:
 except Exception as e:
     st.error(f"❌ matplotlib import failed: {e}")
     st.stop()
-
+@st.cache_resource
 try:
     import prince
     st.write("✅ prince imported")
