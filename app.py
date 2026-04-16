@@ -46,7 +46,7 @@ except Exception as e:
 # -------------------------------------------------
 # SETTINGS
 # -------------------------------------------------
-N_COMPONENTS = 8
+N_COMPONENTS = 3
 N_CLUSTERS = 4
 
 id_cols = [
