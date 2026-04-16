@@ -1,8 +1,8 @@
 streamlit
 pandas
 numpy
-scikit-learn
 matplotlib
-joblib
-prince
+scikit-learn
+scipy
+prince==0.13.0
 openpyxl
